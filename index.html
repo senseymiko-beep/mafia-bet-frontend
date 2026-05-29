@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>MafBet</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Unbounded:wght@700;800;900&display=swap" rel="stylesheet"/>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#f4f1ed;font-family:'Inter',sans-serif;color:#1a1a18;-webkit-font-smoothing:antialiased;}
+  input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;}
+  input[type=number]{-moz-appearance:textfield;}
+  ::-webkit-scrollbar{width:3px;}
+  ::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.1);border-radius:2px;}
+  @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+  @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  input[type=file]{display:none;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+const API_URL = "https://mafia-bet-backend.onrender.com";
+const T = "₸";
+
+async function api(path, options={}) {
+  const token = localStorage.getItem("mafbet_token");
+  const res = await fetch(API_URL+path, {
+    headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{}), ...options.headers},
+    ...options,
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.detail||"HTTP "+res.status);}
+  return res.json();
+}
+async function adminApi(path, options={}) {
+  const key = localStorage.getItem("mafbet_admin_key")||"";
+  const res = await fetch(API_URL+path, {
+    headers:{"Content-Type":"application/json","X-Admin-Key":key,...options.headers},
+    ...options,
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.detail||"HTTP "+res.status);}
+  return res.json();
+}
+function uid(){return "id"+Math.random().toString(36).slice(2,9);}
+
+function fileToBase64(file){
+  return new Promise((res,rej)=>{
+    const reader = new FileReader();
+    reader.onload=e=>res(e.target.result);
+    reader.onerror=rej;
+    reader.readAsDataURL(file);
+  });
+}
+
+const C={
+  bg:"#f4f1ed", card:"#fff", border:"rgba(0,0,0,0.07)", borderMid:"rgba(0,0,0,0.13)",
+  text:"#1a1a18", muted:"#7a7870", faint:"rgba(0,0,0,0.04)",
+  accent:"#1a1a18", accentFg:"#fff",
+  green:"#166534", greenBg:"#dcfce7", greenBorder:"rgba(22,101,52,0.2)",
+  red:"#991b1b", redBg:"#fee2e2", redBorder:"rgba(153,27,27,0.2)",
+  blue:"#1e40af", blueBg:"#dbeafe", blueBorder:"rgba(30,64,175,0.2)",
+  amber:"#92400e", amberBg:"#fef3c7", amberBorder:"rgba(146,64,14,0.2)",
+};
+
+function Tag({children,color,bg}){
+  return <span style={{display:"inline-flex",alignItems:"center",padding:"3px 8px",borderRadius:20,fontSize:11,fontWeight:600,color:color||C.muted,background:bg||"rgba(0,0,0,0.06)",letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{children}</span>;
+}
+
+function Avatar({photo,name,size=36,radius=8,fontSize=11}){
+  const initials=(name||"?").slice(0,2).toUpperCase();
+  if(photo) return <img src={photo} alt={name} style={{width:size,height:size,borderRadius:radius,objectFit:"cover",flexShrink:0,border:"1px solid "+C.border}}/>;
+  return <div style={{width:size,height:size,borderRadius:radius,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize,fontWeight:700,color:C.accentFg,flexShrink:0,fontFamily:"'Unbounded'"}}>{initials}</div>;
+}
+
+function Card({children,style={}}){
+  return <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,...style}}>{children}</div>;
+}
+function Divider(){return <div style={{height:"0.5px",background:C.border}}/>;}
+
+function Toast({msg,type}){
+  const [color,bg]={error:[C.red,C.redBg],info:[C.blue,C.blueBg],success:[C.green,C.greenBg]}[type]||[C.green,C.greenBg];
+  return <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:bg,border:"1px solid "+color+"40",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:500,color,zIndex:9999,animation:"fadeUp .25s ease",whiteSpace:"nowrap",maxWidth:"88vw",textAlign:"center",boxShadow:"0 4px 20px rgba(0,0,0,0.1)"}}>{msg}</div>;
+}
+
+function Modal({title,onClose,children}){
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"flex-end",backdropFilter:"blur(3px)"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",background:"#faf8f5",borderRadius:"20px 20px 0 0",padding:"20px 20px 44px",maxHeight:"93vh",overflowY:"auto",animation:"slideUp .25s ease",boxShadow:"0 -4px 40px rgba(0,0,0,0.12)"}}>
+        <div style={{width:36,height:4,background:"rgba(0,0,0,0.1)",borderRadius:2,margin:"0 auto 20px"}}/>
+        <div style={{fontFamily:"'Unbounded'",fontSize:16,fontWeight:800,color:C.text,marginBottom:20,letterSpacing:"-0.02em"}}>{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Btn({children,onClick,variant="primary",disabled=false}){
+  const s={
+    primary:{bg:C.accent,color:C.accentFg,border:"none"},
+    secondary:{bg:"transparent",color:C.text,border:"1.5px solid "+C.borderMid},
+    danger:{bg:C.redBg,color:C.red,border:"1px solid "+C.redBorder},
+    success:{bg:C.greenBg,color:C.green,border:"1px solid "+C.greenBorder},
+    ghost:{bg:"transparent",color:C.muted,border:"1px solid "+C.border},
+  }[variant];
+  return <button onClick={onClick} disabled={disabled} style={{width:"100%",padding:"12px 16px",borderRadius:10,cursor:disabled?"not-allowed":"pointer",fontSize:14,fontWeight:600,fontFamily:"'Inter'",marginBottom:8,opacity:disabled?0.35:1,...s}}>{children}</button>;
+}
+
+function Field({label,value,onChange,placeholder,type="text"}){
+  return (
+    <div style={{marginBottom:12}}>
+      {label&&<div style={{fontSize:11,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>{label}</div>}
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+        style={{width:"100%",padding:"10px 12px",borderRadius:8,border:"1.5px solid "+C.border,background:"#fff",color:C.text,fontSize:14,outline:"none",fontFamily:"'Inter'",transition:"border .15s"}}
+        onFocus={e=>e.target.style.borderColor=C.borderMid}
+        onBlur={e=>e.target.style.borderColor=C.border}
+      />
+    </div>
+  );
+}
+
+function PhotoPicker({photo,onChange,size=56}){
+  const ref=useRef();
+  async function handleFile(e){
+    const f=e.target.files[0];
+    if(!f)return;
+    const b64=await fileToBase64(f);
+    onChange(b64);
+  }
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+      <div onClick={()=>ref.current.click()} style={{cursor:"pointer",position:"relative"}}>
+        {photo
+          ? <img src={photo} style={{width:size,height:size,borderRadius:10,objectFit:"cover",border:"2px solid "+C.border}}/>
+          : <div style={{width:size,height:size,borderRadius:10,background:"#ece9e4",border:"2px dashed "+C.borderMid,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:4}}>
+              <span style={{fontSize:20}}>📷</span>
+              <span style={{fontSize:9,color:C.muted,fontWeight:600}}>ФОТО</span>
+            </div>
+        }
+        <div style={{position:"absolute",bottom:-4,right:-4,width:18,height:18,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>+</div>
+      </div>
+      <input ref={ref} type="file" accept="image/*" onChange={handleFile}/>
+      {photo&&<button onClick={()=>onChange("")} style={{fontSize:10,color:C.red,background:"transparent",border:"none",cursor:"pointer",padding:"2px 6px"}}>Удалить</button>}
+    </div>
+  );
+}
+
+// ─── ОПЕРАЦИЯ ROW ─────────────────────────────────────────────────────────────
+function OpRow({op}){
+  const isPlus = op.amount>0;
+  const typeInfo = {
+    bet:    {label:"Ставка",     color:C.amber,  bg:C.amberBg},
+    topup:  {label:"Пополнение", color:C.green,  bg:C.greenBg},
+    win:    {label:"Выигрыш",    color:C.green,  bg:C.greenBg},
+    admin:  {label:"Корректировка", color:C.blue, bg:C.blueBg},
+  }[op.type]||{label:op.type, color:C.muted, bg:"rgba(0,0,0,0.05)"};
+
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",padding:"12px 16px"}}>
+      <div style={{flex:1,minWidth:0,marginRight:10}}>
+        <div style={{marginBottom:4}}><Tag color={typeInfo.color} bg={typeInfo.bg}>{typeInfo.label}</Tag></div>
+        {op.comment&&<div style={{fontSize:12,color:C.muted,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{op.comment}</div>}
+        <div style={{fontSize:11,color:"rgba(0,0,0,0.25)",marginTop:3}}>{op.created_at?.slice(0,16)}</div>
+      </div>
+      <div style={{textAlign:"right",flexShrink:0}}>
+        <div style={{fontFamily:"'Unbounded'",fontSize:14,fontWeight:700,color:isPlus?C.green:C.red,display:"flex",alignItems:"center",gap:2,justifyContent:"flex-end"}}>
+          {isPlus?"+":""}{op.amount>0?op.amount.toLocaleString():Math.abs(op.amount).toLocaleString()} {T}
+        </div>
+        <div style={{fontSize:11,color:C.muted,marginTop:3,display:"flex",alignItems:"center",gap:2,justifyContent:"flex-end"}}>
+          {T} {op.balance?.toLocaleString()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function LoginScreen({onLogin,loading,error}){
+  const [name,setName]=useState("");
+  const [username,setUsername]=useState("");
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:340}}>
+        <div style={{textAlign:"center",marginBottom:40}}>
+          <div style={{fontFamily:"'Unbounded'",fontSize:30,fontWeight:900,color:C.text,letterSpacing:"-0.05em",lineHeight:1}}>MafBet</div>
+          <div style={{fontSize:13,color:C.muted,marginTop:10}}>Ставки на турниры по мафии</div>
+        </div>
+        <Card style={{padding:24}}>
+          <Field label="Имя" value={name} onChange={setName} placeholder="Иван Иванов"/>
+          <Field label="Username" value={username} onChange={setUsername} placeholder="@username"/>
+          {error&&<div style={{fontSize:12,color:C.red,marginBottom:10,marginTop:-4}}>{error}</div>}
+          <button onClick={()=>name.trim()&&onLogin({name,username})} disabled={!name.trim()||loading}
+            style={{width:"100%",padding:"13px",borderRadius:10,border:"none",background:name.trim()?C.accent:"#e5e2de",color:name.trim()?C.accentFg:C.muted,fontSize:14,fontWeight:700,cursor:name.trim()?"pointer":"not-allowed",fontFamily:"'Inter'",marginTop:4}}>
+            {loading?"Входим...":"Войти →"}
+          </button>
+        </Card>
+        <div style={{fontSize:11,color:C.muted,marginTop:16,textAlign:"center",opacity:0.6}}>В Telegram Mini App вход автоматический</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PLAYER APP ───────────────────────────────────────────────────────────────
+function PlayerApp({currentUser,onSwitchAdmin,onLogout,showToast}){
+  const [tab,setTab]=useState("tournaments");
+  const [tournaments,setTournaments]=useState([]);
+  const [operations,setOperations]=useState([]);
+  const [user,setUser]=useState(currentUser);
+  const [betModal,setBetModal]=useState(null);
+  const [topupModal,setTopupModal]=useState(false);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{loadData();},[]);
+
+  async function loadData(){
+    setLoading(true);
+    try{
+      const [t,ops,u]=await Promise.all([api("/tournaments"),api("/me/operations"),api("/me")]);
+      setTournaments(t);setOperations(ops);setUser(u);
+    }catch(e){showToast(e.message,"error");}
+    setLoading(false);
+  }
+
+  async function handleConfirmBet(amount){
+    try{
+      const res=await api("/bets",{method:"POST",body:JSON.stringify({tournament_id:betModal.tournament.id,participant_id:betModal.participant.id,amount})});
+      setUser(u=>({...u,coins:res.new_balance}));
+      setBetModal(null);
+      showToast("Ставка принята! Возможный выигрыш: "+res.bet.payout.toLocaleString()+" "+T);
+      loadData();
+    }catch(e){showToast(e.message,"error");}
+  }
+
+  async function handleTopup(amount,comment){
+    try{
+      await api("/topup/request",{method:"POST",body:JSON.stringify({amount,comment})});
+      setTopupModal(false);
+      showToast("Запрос отправлен","info");
+    }catch(e){showToast(e.message,"error");}
+  }
+
+  const wonOps=operations.filter(o=>o.type==="win");
+  const totalWon=wonOps.reduce((s,o)=>s+o.amount,0);
+  const betOps=operations.filter(o=>o.type==="bet");
+
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,maxWidth:480,margin:"0 auto"}}>
+      <div style={{padding:"0 16px",position:"sticky",top:0,zIndex:100,background:C.bg}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0 10px"}}>
+          <div style={{fontFamily:"'Unbounded'",fontSize:22,fontWeight:900,color:C.text,letterSpacing:"-0.05em"}}>MafBet</div>
+          <div style={{display:"flex",alignItems:"center",gap:7}}>
+            <button onClick={()=>setTopupModal(true)} style={{padding:"7px 11px",borderRadius:8,border:"1.5px solid "+C.border,background:C.card,color:C.muted,fontSize:12,fontWeight:600,cursor:"pointer"}}>+ Пополнить</button>
+            <div style={{padding:"7px 11px",borderRadius:8,background:C.card,border:"1.5px solid "+C.border,fontSize:13,fontWeight:700,color:C.text,display:"flex",alignItems:"center",gap:3}}>
+              <span style={{fontFamily:"'Unbounded'",fontSize:12}}>{T}</span> {(user.coins||0).toLocaleString()}
+            </div>
+            <button onClick={onSwitchAdmin} style={{padding:"7px 10px",borderRadius:8,border:"1.5px solid "+C.border,background:C.card,color:C.muted,fontSize:13,cursor:"pointer"}}>⚙</button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:0,background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:3,marginBottom:12}}>
+          {[["tournaments","Турниры"],["history","История"],["profile","Профиль"]].map(([id,lb])=>(
+            <button key={id} onClick={()=>{setTab(id);if(id!=="tournaments")loadData();}}
+              style={{flex:1,padding:"8px 4px",borderRadius:7,border:"none",background:tab===id?C.accent:"transparent",cursor:"pointer",fontSize:13,fontWeight:tab===id?700:500,color:tab===id?C.accentFg:C.muted,fontFamily:"'Inter'",transition:"all .15s"}}>
+              {lb}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{padding:"0 16px 100px"}}>
+        {loading?(
+          <div style={{textAlign:"center",padding:"80px 0",color:C.muted}}>
+            <div style={{fontSize:24,display:"inline-block",animation:"spin 1s linear infinite",marginBottom:12,opacity:0.35}}>◌</div>
+            <div style={{fontSize:13}}>Загрузка</div>
+          </div>
+        ):tab==="tournaments"?(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {tournaments.length===0
+              ?<Card style={{padding:"40px 24px",textAlign:"center"}}><div style={{fontSize:13,color:C.muted}}>Турниров пока нет</div></Card>
+              :tournaments.map(t=><TournamentCard key={t.id} tournament={t} operations={operations} onBet={(t,p)=>setBetModal({tournament:t,participant:p})}/>)
+            }
+          </div>
+        ):tab==="history"?(
+          <HistoryTab operations={operations}/>
+        ):(
+          <ProfileTab user={user} betOps={betOps} wonOps={wonOps} totalWon={totalWon} onLogout={onLogout}/>
+        )}
+      </div>
+
+      {betModal&&<BetModal tournament={betModal.tournament} participant={betModal.participant} balance={user.coins} onClose={()=>setBetModal(null)} onConfirm={handleConfirmBet}/>}
+      {topupModal&&<TopupModal onClose={()=>setTopupModal(false)} onConfirm={handleTopup}/>}
+    </div>
+  );
+}
+
+function TournamentCard({tournament,operations,onBet}){
+  const isSettled=tournament.status==="settled";
+  const isFrozen=tournament.bets_frozen&&!isSettled;
+  const parts=typeof tournament.participants==="string"?JSON.parse(tournament.participants):(tournament.participants||[]);
+  const myBetOp=operations.find(o=>o.type==="bet"&&parts.some(p=>o.comment?.includes(p.name))&&o.comment?.includes(tournament.name));
+
+  return (
+    <Card>
+      <div style={{padding:"16px 16px 12px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div style={{flex:1,marginRight:10}}>
+            <div style={{fontFamily:"'Unbounded'",fontSize:14,fontWeight:800,color:C.text,letterSpacing:"-0.02em",lineHeight:1.3}}>{tournament.name}</div>
+            {tournament.description&&<div style={{fontSize:12,color:C.muted,marginTop:5}}>{tournament.description}</div>}
+            <div style={{fontSize:11,color:"rgba(0,0,0,0.28)",marginTop:5}}>до {tournament.ends_at}</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+            {isSettled?<Tag color={C.green} bg={C.greenBg}>завершён</Tag>:<Tag color={C.amber} bg={C.amberBg}>идёт</Tag>}
+            {isFrozen&&<Tag color={C.blue} bg={C.blueBg}>❄ заморожен</Tag>}
+          </div>
+        </div>
+      </div>
+      <Divider/>
+      <div style={{padding:"8px 8px"}}>
+        {parts.map((p,i)=>{
+          const isWinner=tournament.winner_id===p.id;
+          const canBet=!isSettled&&!isFrozen;
+          return (
+            <div key={p.id} onClick={()=>canBet&&onBet(tournament,p)}
+              style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 10px",borderRadius:10,cursor:canBet?"pointer":"default",background:isWinner?C.greenBg:"transparent",marginBottom:i<parts.length-1?3:0,transition:"background .15s"}}
+              onMouseEnter={e=>{if(canBet)e.currentTarget.style.background="rgba(0,0,0,0.03)";}}
+              onMouseLeave={e=>{e.currentTarget.style.background=isWinner?C.greenBg:"transparent";}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <Avatar photo={p.photo} name={p.name} size={38} radius={9} fontSize={11}/>
+                <div>
+                  <div style={{fontSize:14,fontWeight:isWinner?700:500,color:isWinner?C.green:C.text}}>{p.name}</div>
+                  {isWinner&&<div style={{fontSize:11,color:C.green,marginTop:1,fontWeight:600}}>🏆 победитель</div>}
+                </div>
+              </div>
+              <div style={{padding:"5px 10px",borderRadius:8,background:(isSettled||isFrozen)?"rgba(0,0,0,0.04)":"rgba(0,0,0,0.07)",fontSize:14,fontWeight:700,color:(isSettled||isFrozen)?C.muted:C.text,fontFamily:"'Unbounded'",letterSpacing:"-0.02em"}}>{"×"+parseFloat(p.odds).toFixed(1)}</div>
+            </div>
+          );
+        })}
+      </div>
+      {isFrozen&&<div style={{padding:"8px 16px 14px",fontSize:11,color:C.blue,textAlign:"center",fontWeight:500}}>Приём ставок завершён · ожидаем результатов</div>}
+      {!isSettled&&!isFrozen&&<div style={{padding:"8px 16px 14px",fontSize:11,color:"rgba(0,0,0,0.28)",textAlign:"center"}}>Нажмите на участника чтобы поставить</div>}
+    </Card>
+  );
+}
+
+function HistoryTab({operations}){
+  const [filter,setFilter]=useState("all");
+  const filters=[
+    {id:"all",label:"Все"},
+    {id:"bet",label:"Ставки"},
+    {id:"win",label:"Выигрыши"},
+    {id:"topup",label:"Пополнения"},
+    {id:"admin",label:"Корректировки"},
+  ];
+  const filtered=filter==="all"?operations:operations.filter(o=>o.type===filter);
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+        {filters.map(f=>(
+          <button key={f.id} onClick={()=>setFilter(f.id)} style={{padding:"5px 12px",borderRadius:20,border:"1.5px solid "+(filter===f.id?C.accent:C.border),background:filter===f.id?C.accent:"#fff",color:filter===f.id?C.accentFg:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",transition:"all .15s"}}>{f.label}</button>
+        ))}
+      </div>
+      {filtered.length===0
+        ?<Card style={{padding:"40px 24px",textAlign:"center"}}><div style={{fontSize:13,color:C.muted}}>Операций нет</div></Card>
+        :<Card>{filtered.map((op,i)=><div key={op.id}>{i>0&&<Divider/>}<OpRow op={op}/></div>)}</Card>
+      }
+    </div>
+  );
+}
+
+function ProfileTab({user,betOps,wonOps,totalWon,onLogout}){
+  const stats=[
+    {label:"Баланс",val:(user.coins||0).toLocaleString()+" "+T},
+    {label:"Ставок",val:betOps.length},
+    {label:"Побед",val:wonOps.length},
+    {label:"Выиграно",val:totalWon.toLocaleString()+" "+T},
+  ];
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <Card style={{padding:"22px 20px",textAlign:"center"}}>
+        <div style={{width:60,height:60,borderRadius:14,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,color:C.accentFg,margin:"0 auto 12px",fontFamily:"'Unbounded'",fontWeight:900}}>{user.name?.charAt(0)}</div>
+        <div style={{fontFamily:"'Unbounded'",fontSize:17,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{user.name}</div>
+        {user.username&&<div style={{fontSize:13,color:C.muted,marginTop:4}}>{user.username}</div>}
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        {stats.map(s=>(
+          <Card key={s.label} style={{padding:"14px 16px"}}>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>{s.label}</div>
+            <div style={{fontFamily:"'Unbounded'",fontSize:17,fontWeight:800,color:C.text,letterSpacing:"-0.02em"}}>{s.val}</div>
+          </Card>
+        ))}
+      </div>
+      <button onClick={onLogout} style={{width:"100%",padding:"12px",borderRadius:10,border:"1.5px solid "+C.redBorder,background:C.redBg,color:C.red,fontSize:13,fontWeight:600,cursor:"pointer"}}>Выйти</button>
+    </div>
+  );
+}
+
+function BetModal({tournament,participant,balance,onClose,onConfirm}){
+  const [amount,setAmount]=useState(100);
+  const payout=Math.round(amount*participant.odds);
+  const valid=amount>0&&amount<=balance;
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.3)",display:"flex",alignItems:"flex-end",backdropFilter:"blur(3px)"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",background:"#faf8f5",borderRadius:"20px 20px 0 0",padding:"20px 20px 44px",animation:"slideUp .25s ease",boxShadow:"0 -4px 40px rgba(0,0,0,0.1)"}}>
+        <div style={{width:36,height:4,background:"rgba(0,0,0,0.1)",borderRadius:2,margin:"0 auto 20px"}}/>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <Avatar photo={participant.photo} name={participant.name} size={48} radius={12} fontSize={13}/>
+          <div>
+            <div style={{fontFamily:"'Unbounded'",fontSize:17,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{participant.name}</div>
+            <div style={{fontSize:13,color:C.muted,marginTop:3}}>{tournament.name} · <strong style={{color:C.text}}>{"×"+parseFloat(participant.odds).toFixed(1)}</strong></div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          {[50,100,250,500].map(p=>(
+            <button key={p} onClick={()=>setAmount(p)} style={{flex:1,padding:"9px 0",borderRadius:8,border:"1.5px solid "+(amount===p?C.accent:C.border),background:amount===p?C.accent:"#fff",color:amount===p?C.accentFg:C.muted,fontSize:13,fontWeight:600,cursor:"pointer",transition:"all .15s"}}>{p}</button>
+          ))}
+        </div>
+        <input type="number" value={amount} min={1} max={balance} onChange={e=>setAmount(Math.max(0,parseInt(e.target.value)||0))}
+          style={{width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+(valid?C.border:C.redBorder),background:"#fff",color:C.text,fontSize:16,fontWeight:600,outline:"none",fontFamily:"'Inter'",marginBottom:8}}/>
+        <div style={{fontSize:12,color:C.muted,marginBottom:14,display:"flex",justifyContent:"space-between"}}>
+          <span>Баланс: {(balance||0).toLocaleString()} {T}</span>
+          {amount>balance&&<span style={{color:C.red,fontWeight:500}}>Недостаточно</span>}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",borderRadius:10,background:"rgba(0,0,0,0.04)",marginBottom:14}}>
+          <span style={{fontSize:13,color:C.muted}}>Возможный выигрыш</span>
+          <span style={{fontFamily:"'Unbounded'",fontSize:16,fontWeight:800,color:C.text}}>{payout.toLocaleString()+" "+T}</span>
+        </div>
+        <button disabled={!valid} onClick={()=>valid&&onConfirm(amount)} style={{width:"100%",padding:"14px",borderRadius:10,border:"none",background:valid?C.accent:"#e5e2de",color:valid?C.accentFg:C.muted,fontSize:14,fontWeight:700,cursor:valid?"pointer":"not-allowed"}}>
+          {valid?"Поставить "+amount.toLocaleString()+" "+T:"Поставить"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TopupModal({onClose,onConfirm}){
+  const [amount,setAmount]=useState(500);
+  const [comment,setComment]=useState("");
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.3)",display:"flex",alignItems:"flex-end",backdropFilter:"blur(3px)"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",background:"#faf8f5",borderRadius:"20px 20px 0 0",padding:"20px 20px 44px",animation:"slideUp .25s ease",boxShadow:"0 -4px 40px rgba(0,0,0,0.1)"}}>
+        <div style={{width:36,height:4,background:"rgba(0,0,0,0.1)",borderRadius:2,margin:"0 auto 20px"}}/>
+        <div style={{fontFamily:"'Unbounded'",fontSize:16,fontWeight:800,color:C.text,marginBottom:6,letterSpacing:"-0.02em"}}>Пополнение баланса</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:18}}>Запрос уйдёт администратору</div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          {[100,500,1000,2000].map(p=>(
+            <button key={p} onClick={()=>setAmount(p)} style={{flex:1,padding:"9px 0",borderRadius:8,border:"1.5px solid "+(amount===p?C.accent:C.border),background:amount===p?C.accent:"#fff",color:amount===p?C.accentFg:C.muted,fontSize:13,fontWeight:600,cursor:"pointer",transition:"all .15s"}}>{p}</button>
+          ))}
+        </div>
+        <input type="number" value={amount} min={1} onChange={e=>setAmount(parseInt(e.target.value)||0)}
+          style={{width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,background:"#fff",color:C.text,fontSize:16,fontWeight:600,outline:"none",fontFamily:"'Inter'",marginBottom:10}}/>
+        <input value={comment} onChange={e=>setComment(e.target.value)} placeholder="Комментарий (необязательно)"
+          style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,background:"#fff",color:C.text,fontSize:13,outline:"none",fontFamily:"'Inter'",marginBottom:16}}/>
+        <button disabled={amount<=0} onClick={()=>amount>0&&onConfirm(amount,comment)} style={{width:"100%",padding:"14px",borderRadius:10,border:"none",background:amount>0?C.accent:"#e5e2de",color:amount>0?C.accentFg:C.muted,fontSize:14,fontWeight:700,cursor:amount>0?"pointer":"not-allowed"}}>
+          {"Запросить "+amount.toLocaleString()+" "+T}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN ────────────────────────────────────────────────────────────────────
+function AdminApp({onExit,showToast}){
+  const [tab,setTab]=useState("tournaments");
+  const [tournaments,setTournaments]=useState([]);
+  const [users,setUsers]=useState([]);
+  const [topupRequests,setTopupRequests]=useState([]);
+  const [allOps,setAllOps]=useState([]);
+  const [modal,setModal]=useState(null);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{loadAll();},[]);
+
+  async function loadAll(){
+    setLoading(true);
+    try{
+      const [t,u,r,ops]=await Promise.all([
+        api("/tournaments"),
+        adminApi("/admin/users"),
+        adminApi("/admin/topup/requests"),
+        adminApi("/admin/operations"),
+      ]);
+      setTournaments(Array.isArray(t)?t:[]);
+      setUsers(Array.isArray(u)?u:[]);
+      setTopupRequests(Array.isArray(r)?r:[]);
+      setAllOps(Array.isArray(ops)?ops:[]);
+    }catch(e){showToast(e.message,"error");}
+    setLoading(false);
+  }
+
+  async function handleFreeze(tid,frozen){
+    try{await adminApi("/admin/tournaments/"+tid+"/freeze",{method:"POST",body:JSON.stringify({frozen})});showToast(frozen?"Ставки заморожены":"Ставки разморожены","info");loadAll();}
+    catch(e){showToast(e.message,"error");}
+  }
+  async function handleApprove(id){
+    try{await adminApi("/admin/topup/"+id+"/approve",{method:"POST"});showToast("Пополнение одобрено");loadAll();}
+    catch(e){showToast(e.message,"error");}
+  }
+  async function handleReject(id){
+    try{await adminApi("/admin/topup/"+id+"/reject",{method:"POST",body:JSON.stringify({reason:"Отклонено"})});showToast("Запрос отклонён","info");loadAll();}
+    catch(e){showToast(e.message,"error");}
+  }
+
+  const pending=topupRequests.filter(r=>r.status==="pending");
+
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,maxWidth:480,margin:"0 auto"}}>
+      <div style={{padding:"0 16px",position:"sticky",top:0,zIndex:100,background:C.bg}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0 10px"}}>
+          <div>
+            <div style={{fontFamily:"'Unbounded'",fontSize:20,fontWeight:900,color:C.text,letterSpacing:"-0.04em"}}>Admin</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>{""+tournaments.length+" турниров · "+users.length+" игроков"}</div>
+          </div>
+          <button onClick={onExit} style={{padding:"7px 12px",borderRadius:8,border:"1.5px solid "+C.border,background:C.card,color:C.muted,fontSize:12,cursor:"pointer"}}>← Выйти</button>
+        </div>
+        <div style={{display:"flex",gap:0,background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:3,marginBottom:12}}>
+          {[["tournaments","Турниры"],["users","Игроки"],["history","История"],["topup","Запросы"+(pending.length>0?" ("+pending.length+")":"")]].map(([id,lb])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 2px",borderRadius:7,border:"none",background:tab===id?C.accent:"transparent",cursor:"pointer",fontSize:11,fontWeight:tab===id?700:500,color:tab===id?C.accentFg:C.muted,fontFamily:"'Inter'",transition:"all .15s"}}>{lb}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{padding:"0 16px 100px"}}>
+        {loading?(
+          <div style={{textAlign:"center",padding:"80px 0",color:C.muted}}>
+            <div style={{fontSize:24,display:"inline-block",animation:"spin 1s linear infinite",opacity:0.35}}>◌</div>
+          </div>
+        ):tab==="tournaments"?(
+          <AdminTournaments tournaments={tournaments} setModal={setModal} onFreeze={handleFreeze}/>
+        ):tab==="users"?(
+          <AdminUsers users={users} setModal={setModal}/>
+        ):tab==="history"?(
+          <AdminHistory operations={allOps} users={users}/>
+        ):(
+          <AdminTopup requests={topupRequests} onApprove={handleApprove} onReject={handleReject}/>
+        )}
+      </div>
+
+      {modal?.type==="create_tournament"&&<CreateTournamentModal onClose={()=>setModal(null)} onCreate={async t=>{try{await adminApi("/admin/tournaments",{method:"POST",body:JSON.stringify(t)});showToast("Турнир создан");setModal(null);loadAll();}catch(e){showToast(e.message,"error");}}}/>}
+      {modal?.type==="edit_tournament"&&<EditTournamentModal tournament={modal.data} onClose={()=>setModal(null)}
+        onSave={async t=>{try{await adminApi("/admin/tournaments/"+t.id,{method:"PATCH",body:JSON.stringify(t)});showToast("Сохранено");setModal(null);loadAll();}catch(e){showToast(e.message,"error");}}}
+        onSettle={async(tid,pid)=>{try{await adminApi("/admin/tournaments/"+tid+"/settle",{method:"POST",body:JSON.stringify({winner_participant_id:pid})});showToast("Победитель выбран!");setModal(null);loadAll();}catch(e){showToast(e.message,"error");}}}
+        onDelete={async tid=>{try{await adminApi("/admin/tournaments/"+tid,{method:"DELETE"});showToast("Удалено","info");setModal(null);loadAll();}catch(e){showToast(e.message,"error");}}}
+      />}
+      {modal?.type==="edit_user"&&<EditUserModal user={modal.data} onClose={()=>setModal(null)} onSave={async(uid,op,amt)=>{try{await adminApi("/admin/users/"+uid+"/coins",{method:"PATCH",body:JSON.stringify({operation:op,amount:amt})});showToast("Баланс обновлён");setModal(null);loadAll();}catch(e){showToast(e.message,"error");}}}/>}
+    </div>
+  );
+}
+
+function AdminTournaments({tournaments,setModal,onFreeze}){
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <button onClick={()=>setModal({type:"create_tournament"})} style={{width:"100%",padding:"13px",borderRadius:10,border:"2px dashed "+C.border,background:"transparent",color:C.muted,fontSize:13,fontWeight:600,cursor:"pointer"}}>+ Создать турнир</button>
+      {tournaments.length===0&&<Card style={{padding:"40px 24px",textAlign:"center"}}><div style={{fontSize:13,color:C.muted}}>Нет турниров</div></Card>}
+      {tournaments.map(t=>{
+        const parts=typeof t.participants==="string"?JSON.parse(t.participants):(t.participants||[]);
+        const isFrozen=t.bets_frozen&&t.status!=="settled";
+        return (
+          <Card key={t.id}>
+            <div style={{padding:"14px 16px 12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontFamily:"'Unbounded'",fontSize:13,fontWeight:800,color:C.text,letterSpacing:"-0.02em"}}>{t.name}</div>
+                  {t.description&&<div style={{fontSize:11,color:C.muted,marginTop:3}}>{t.description}</div>}
+                  <div style={{fontSize:11,color:"rgba(0,0,0,0.28)",marginTop:4}}>{"до "+t.ends_at+" · "+parts.length+" участников"}</div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end",marginLeft:10,flexShrink:0}}>
+                  {t.status==="settled"?<Tag color={C.green} bg={C.greenBg}>завершён</Tag>:<Tag color={C.amber} bg={C.amberBg}>идёт</Tag>}
+                  {isFrozen&&<Tag color={C.blue} bg={C.blueBg}>❄ заморожен</Tag>}
+                </div>
+              </div>
+            </div>
+            <Divider/>
+            <div style={{padding:"8px 8px"}}>
+              {parts.map((p,i)=>(
+                <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",borderRadius:8,background:t.winner_id===p.id?C.greenBg:"transparent",marginBottom:i<parts.length-1?2:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <Avatar photo={p.photo} name={p.name} size={30} radius={6} fontSize={9}/>
+                    <span style={{fontSize:13,fontWeight:t.winner_id===p.id?700:500,color:t.winner_id===p.id?C.green:C.text}}>{p.name}{t.winner_id===p.id?" 🏆":""}</span>
+                  </div>
+                  <span style={{fontFamily:"'Unbounded'",fontSize:13,fontWeight:700,color:C.muted}}>{"×"+parseFloat(p.odds).toFixed(1)}</span>
+                </div>
+              ))}
+            </div>
+            {t.status==="open"&&(
+              <div style={{padding:"8px 12px 12px",display:"flex",gap:6}}>
+                <button onClick={()=>onFreeze(t.id,!t.bets_frozen)} style={{flex:1,padding:"9px",borderRadius:8,border:"1.5px solid "+(isFrozen?C.amberBorder:C.blueBorder),background:isFrozen?C.amberBg:C.blueBg,color:isFrozen?C.amber:C.blue,fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                  {isFrozen?"🔥 Разморозить":"❄ Заморозить"}
+                </button>
+                <button onClick={()=>setModal({type:"edit_tournament",data:{...t,participants:parts}})} style={{flex:1,padding:"9px",borderRadius:8,border:"1.5px solid "+C.border,background:"transparent",color:C.muted,fontSize:12,fontWeight:600,cursor:"pointer"}}>Редактировать</button>
+              </div>
+            )}
+            {t.status==="settled"&&(
+              <div style={{padding:"8px 12px 12px"}}>
+                <button onClick={()=>setModal({type:"edit_tournament",data:{...t,participants:parts}})} style={{width:"100%",padding:"9px",borderRadius:8,border:"1.5px solid "+C.border,background:"transparent",color:C.muted,fontSize:12,fontWeight:600,cursor:"pointer"}}>Редактировать / Удалить</button>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function AdminHistory({operations,users}){
+  const [filter,setFilter]=useState("all");
+  const [userFilter,setUserFilter]=useState("all");
+  const typeFilters=[{id:"all",label:"Все"},{id:"bet",label:"Ставки"},{id:"win",label:"Выигрыши"},{id:"topup",label:"Пополнения"},{id:"admin",label:"Корректировки"}];
+  let filtered=operations;
+  if(filter!=="all")filtered=filtered.filter(o=>o.type===filter);
+  if(userFilter!=="all")filtered=filtered.filter(o=>o.user_id===parseInt(userFilter));
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+        {typeFilters.map(f=>(
+          <button key={f.id} onClick={()=>setFilter(f.id)} style={{padding:"4px 10px",borderRadius:20,border:"1.5px solid "+(filter===f.id?C.accent:C.border),background:filter===f.id?C.accent:"#fff",color:filter===f.id?C.accentFg:C.muted,fontSize:11,fontWeight:600,cursor:"pointer",transition:"all .15s"}}>{f.label}</button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+        <button onClick={()=>setUserFilter("all")} style={{padding:"4px 10px",borderRadius:20,border:"1.5px solid "+(userFilter==="all"?C.borderMid:C.border),background:userFilter==="all"?"rgba(0,0,0,0.07)":"#fff",color:userFilter==="all"?C.text:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}}>Все игроки</button>
+        {users.map(u=>(
+          <button key={u.id} onClick={()=>setUserFilter(u.id)} style={{padding:"4px 10px",borderRadius:20,border:"1.5px solid "+(userFilter===u.id?C.borderMid:C.border),background:userFilter===u.id?"rgba(0,0,0,0.07)":"#fff",color:userFilter===u.id?C.text:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}}>{u.name.split(" ")[0]}</button>
+        ))}
+      </div>
+      {filtered.length===0
+        ?<Card style={{padding:"40px 24px",textAlign:"center"}}><div style={{fontSize:13,color:C.muted}}>Операций нет</div></Card>
+        :<Card>
+          {filtered.map((op,i)=>(
+            <div key={op.id}>
+              {i>0&&<Divider/>}
+              <div style={{padding:"12px 16px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{flex:1,minWidth:0,marginRight:10}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:3}}>{op.user_name} <span style={{color:C.muted,fontWeight:400,fontSize:11}}>{op.user_username}</span></div>
+                    <div style={{marginBottom:3}}><OpRow op={op}/></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+         </Card>
+      }
+    </div>
+  );
+}
+
+function AdminUsers({users,setModal}){
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {users.map(u=>(
+        <Card key={u.id} style={{padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <Avatar photo={null} name={u.name} size={42} radius={10} fontSize={14}/>
+            <div>
+              <div style={{fontSize:14,fontWeight:600,color:C.text}}>{u.name}</div>
+              <div style={{fontSize:11,color:C.muted}}>{u.username}</div>
+              <div style={{fontSize:11,color:"rgba(0,0,0,0.28)",marginTop:2}}>{"Ставок: "+u.total_bets+" · Побед: "+u.total_won}</div>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontFamily:"'Unbounded'",fontSize:14,fontWeight:800,color:C.text}}>{(u.coins||0).toLocaleString()+" "+T}</div>
+            <button onClick={()=>setModal({type:"edit_user",data:u})} style={{marginTop:6,padding:"4px 10px",borderRadius:6,border:"1.5px solid "+C.border,background:"transparent",color:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}}>Изменить</button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function AdminTopup({requests,onApprove,onReject}){
+  const pending=requests.filter(r=>r.status==="pending");
+  const done=requests.filter(r=>r.status!=="pending");
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {pending.length===0&&<Card style={{padding:"40px 24px",textAlign:"center"}}><div style={{fontSize:13,color:C.muted}}>Новых запросов нет</div></Card>}
+      {pending.length>0&&<div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600,marginBottom:4}}>{"Ожидают · "+pending.length}</div>}
+      {pending.map(r=>(
+        <Card key={r.id} style={{padding:"16px"}}>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.text}}>{r.user_name} <span style={{color:C.muted,fontWeight:400,fontSize:12}}>{r.user_username}</span></div>
+            <div style={{fontFamily:"'Unbounded'",fontSize:22,fontWeight:800,color:C.text,marginTop:6,letterSpacing:"-0.03em"}}>{(r.amount||0).toLocaleString()+" "+T}</div>
+            {r.comment&&<div style={{fontSize:12,color:C.muted,marginTop:6}}>{r.comment}</div>}
+            <div style={{fontSize:11,color:"rgba(0,0,0,0.28)",marginTop:4}}>{r.created_at?.slice(0,16)}</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>onApprove(r.id)} style={{flex:1,padding:"10px",borderRadius:8,border:"1.5px solid "+C.greenBorder,background:C.greenBg,color:C.green,fontSize:13,fontWeight:600,cursor:"pointer"}}>Одобрить</button>
+            <button onClick={()=>onReject(r.id)} style={{flex:1,padding:"10px",borderRadius:8,border:"1.5px solid "+C.redBorder,background:C.redBg,color:C.red,fontSize:13,fontWeight:600,cursor:"pointer"}}>Отклонить</button>
+          </div>
+        </Card>
+      ))}
+      {done.length>0&&(
+        <>
+          <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600,margin:"4px 0 4px"}}>История</div>
+          {done.slice(0,15).map(r=>(
+            <Card key={r.id} style={{padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:C.text}}>{r.user_name}</div>
+                <div style={{fontSize:12,color:C.muted}}>{(r.amount||0).toLocaleString()+" "+T}</div>
+              </div>
+              <Tag color={r.status==="approved"?C.green:C.red} bg={r.status==="approved"?C.greenBg:C.redBg}>{r.status==="approved"?"одобрен":"отклонён"}</Tag>
+            </Card>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Admin Modals ─────────────────────────────────────────────────────────────
+function ParticipantEditor({p,i,total,onChange,onRemove}){
+  const ref=useRef();
+  async function handleFile(e){
+    const f=e.target.files[0];
+    if(!f)return;
+    const b64=await fileToBase64(f);
+    onChange("photo",b64);
+  }
+  return (
+    <div style={{padding:"14px",borderRadius:10,border:"1px solid "+C.border,marginBottom:8,background:"rgba(0,0,0,0.02)",position:"relative"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontSize:11,color:C.muted,fontWeight:600}}>{"Игрок "+(i+1)}</div>
+        {total>2&&<button onClick={onRemove} style={{background:"transparent",border:"none",color:C.red,fontSize:16,cursor:"pointer",padding:"0 4px"}}>×</button>}
+      </div>
+      <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
+        <div>
+          <div style={{fontSize:10,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Фото</div>
+          <div onClick={()=>ref.current.click()} style={{cursor:"pointer",position:"relative",width:50,height:50,borderRadius:8,overflow:"hidden",border:"1.5px dashed "+(p.photo?C.border:C.borderMid),background:p.photo?"transparent":"rgba(0,0,0,0.03)",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:2}}>
+            {p.photo
+              ?<img src={p.photo} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              :<><span style={{fontSize:18}}>📷</span><span style={{fontSize:8,color:C.muted,fontWeight:600}}>ЗАГРУЗИТЬ</span></>
+            }
+          </div>
+          <input ref={ref} type="file" accept="image/*" onChange={handleFile}/>
+          {p.photo&&<button onClick={()=>onChange("photo","")} style={{fontSize:9,color:C.red,background:"transparent",border:"none",cursor:"pointer",padding:"3px 0",display:"block",width:"100%",textAlign:"center"}}>удалить</button>}
+        </div>
+        <div style={{flex:1}}>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Имя</div>
+            <input value={p.name} onChange={e=>onChange("name",e.target.value)} placeholder="Иван Иванов" style={{width:"100%",padding:"8px 10px",borderRadius:7,border:"1px solid "+C.border,background:"#fff",color:C.text,fontSize:13,outline:"none",fontFamily:"'Inter'"}}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div>
+              <div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Коэф</div>
+              <input type="number" step="0.1" min="1.1" value={p.odds} onChange={e=>onChange("odds",e.target.value)} style={{width:"100%",padding:"8px 10px",borderRadius:7,border:"1px solid "+C.border,background:"#fff",color:C.text,fontSize:13,outline:"none",fontFamily:"'Unbounded'",fontWeight:700}}/>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Ава (2 букв)</div>
+              <input value={p.avatar} onChange={e=>onChange("avatar",e.target.value.slice(0,2).toUpperCase())} maxLength={2} placeholder="ИИ" style={{width:"100%",padding:"8px 10px",borderRadius:7,border:"1px solid "+C.border,background:"#fff",color:C.text,fontSize:13,outline:"none",fontFamily:"'Unbounded'",textTransform:"uppercase"}}/>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateTournamentModal({onClose,onCreate}){
+  const [name,setName]=useState(""); const [desc,setDesc]=useState(""); const [endsAt,setEndsAt]=useState("");
+  const [parts,setParts]=useState([{id:uid(),name:"",odds:"2.0",avatar:"",photo:""},{id:uid(),name:"",odds:"3.0",avatar:"",photo:""}]);
+  function upP(id,f,v){setParts(p=>p.map(x=>x.id===id?Object.assign({},x,{[f]:v}):x));}
+  function handleCreate(){
+    const filled=parts.filter(p=>p.name.trim());
+    if(!name.trim()||filled.length<2)return;
+    onCreate({name:name.trim(),description:desc.trim(),ends_at:endsAt||"—",participants:filled.map(p=>({...p,avatar:p.avatar||p.name.slice(0,2).toUpperCase(),odds:parseFloat(p.odds)||2}))});
+  }
+  return (
+    <Modal title="Новый турнир" onClose={onClose}>
+      <Field label="Название" value={name} onChange={setName} placeholder="Весенний кубок 2026"/>
+      <Field label="Описание" value={desc} onChange={setDesc} placeholder="Открытый чемпионат"/>
+      <Field label="Дата окончания" value={endsAt} onChange={setEndsAt} placeholder="2026-06-30"/>
+      <div style={{fontSize:11,color:C.muted,marginBottom:10,marginTop:4,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>Участники</div>
+      {parts.map((p,i)=><ParticipantEditor key={p.id} p={p} i={i} total={parts.length} onChange={(f,v)=>upP(p.id,f,v)} onRemove={()=>setParts(pp=>pp.filter(x=>x.id!==p.id))}/>)}
+      <button onClick={()=>setParts(p=>[...p,{id:uid(),name:"",odds:"2.0",avatar:"",photo:""}])} style={{width:"100%",padding:"9px",borderRadius:8,border:"1.5px dashed "+C.border,background:"transparent",color:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",marginBottom:16}}>+ Участник</button>
+      <Btn onClick={handleCreate} disabled={!name.trim()||parts.filter(p=>p.name.trim()).length<2}>Создать турнир</Btn>
+      <Btn onClick={onClose} variant="ghost">Отмена</Btn>
+    </Modal>
+  );
+}
+
+function EditTournamentModal({tournament,onClose,onSave,onSettle,onDelete}){
+  const [t,setT]=useState(Object.assign({},tournament));
+  const [view,setView]=useState("main");
+  function upP(id,f,v){setT(prev=>Object.assign({},prev,{participants:prev.participants.map(p=>p.id===id?Object.assign({},p,{[f]:v}):p)}));}
+
+  if(view==="settle") return (
+    <Modal title="Выбрать победителя" onClose={onClose}>
+      <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Турнир завершится, монеты выплатятся победителям.</div>
+      {t.participants.map(p=>(
+        <button key={p.id} onClick={()=>onSettle(t.id,p.id)} style={{width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,background:C.card,color:C.text,fontSize:14,fontWeight:500,cursor:"pointer",marginBottom:6,textAlign:"left",display:"flex",alignItems:"center",gap:12,fontFamily:"'Inter'",transition:"border .15s"}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=C.green}
+          onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+          <Avatar photo={p.photo} name={p.name} size={36} radius={8} fontSize={10}/>
+          <span style={{flex:1}}>{p.name}</span>
+          <span style={{color:C.muted,fontSize:13}}>{"×"+p.odds}</span>
+          <span style={{color:C.green}}>🏆</span>
+        </button>
+      ))}
+      <div style={{marginTop:8}}><Btn onClick={()=>setView("main")} variant="ghost">← Назад</Btn></div>
+    </Modal>
+  );
+
+  return (
+    <Modal title="Редактировать турнир" onClose={onClose}>
+      {[["Название","name"],["Описание","description"],["Дата","ends_at"]].map(([lb,f])=>(
+        <Field key={f} label={lb} value={t[f]||""} onChange={v=>setT(p=>Object.assign({},p,{[f]:v}))} placeholder=""/>
+      ))}
+      <div style={{fontSize:11,color:C.muted,marginBottom:10,marginTop:4,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>Участники</div>
+      {t.participants.map((p,i)=><ParticipantEditor key={p.id} p={p} i={i} total={t.participants.length} onChange={(f,v)=>upP(p.id,f,v)} onRemove={()=>setT(prev=>({...prev,participants:prev.participants.filter(x=>x.id!==p.id)}))}/>)}
+      <div style={{height:8}}/>
+      <Btn onClick={()=>onSave(t)}>Сохранить</Btn>
+      {t.status==="open"&&<Btn onClick={()=>setView("settle")} variant="success">Завершить · выбрать победителя</Btn>}
+      <Btn onClick={()=>onDelete(t.id)} variant="danger">Удалить турнир</Btn>
+      <Btn onClick={onClose} variant="ghost">Отмена</Btn>
+    </Modal>
+  );
+}
+
+function EditUserModal({user,onClose,onSave}){
+  const [op,setOp]=useState("add"); const [delta,setDelta]=useState("");
+  return (
+    <Modal title={user.name} onClose={onClose}>
+      <div style={{fontFamily:"'Unbounded'",fontSize:24,fontWeight:800,color:C.text,marginBottom:20,letterSpacing:"-0.03em"}}>{(user.coins||0).toLocaleString()+" "+T}</div>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {["add","subtract"].map(o=>(
+          <button key={o} onClick={()=>setOp(o)} style={{flex:1,padding:"9px",borderRadius:8,border:"1.5px solid "+(op===o?(o==="add"?C.greenBorder:C.redBorder):C.border),background:op===o?(o==="add"?C.greenBg:C.redBg):"transparent",color:op===o?(o==="add"?C.green:C.red):C.muted,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+            {o==="add"?"+ Начислить":"− Списать"}
+          </button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        <input type="number" value={delta} min={1} onChange={e=>setDelta(e.target.value)} placeholder="Сумма" style={{flex:1,padding:"10px 12px",borderRadius:8,border:"1.5px solid "+C.border,background:"#fff",color:C.text,fontSize:15,outline:"none",fontFamily:"'Unbounded'",fontWeight:700}}/>
+        <button onClick={()=>{const d=parseInt(delta);if(d>0)onSave(user.id,op,d);}} disabled={!delta||parseInt(delta)<=0} style={{padding:"10px 16px",borderRadius:8,border:"none",background:delta&&parseInt(delta)>0?(op==="add"?C.green:C.red):"#e5e2de",color:delta&&parseInt(delta)>0?"#fff":C.muted,fontSize:14,fontWeight:700,cursor:delta&&parseInt(delta)>0?"pointer":"not-allowed"}}>OK</button>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:20}}>
+        {[100,500,1000,5000].map(q=>(
+          <button key={q} onClick={()=>setDelta(String(q))} style={{flex:1,padding:"7px 0",borderRadius:6,border:"1.5px solid "+(delta==q?C.accent:C.border),background:delta==q?C.accent:"transparent",color:delta==q?C.accentFg:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}}>{q}</button>
+        ))}
+      </div>
+      <Btn onClick={onClose} variant="ghost">Закрыть</Btn>
+    </Modal>
+  );
+}
+
+function AdminKeyScreen({onSuccess,onCancel}){
+  const [key,setKey]=useState(""); const [err,setErr]=useState(false); const [loading,setLoading]=useState(false);
+  async function tryKey(){
+    if(!key)return; setLoading(true); setErr(false);
+    try{
+      const res=await fetch(API_URL+"/admin/users",{headers:{"X-Admin-Key":key,"Content-Type":"application/json"}});
+      if(res.ok){localStorage.setItem("mafbet_admin_key",key);onSuccess();}
+      else setErr(true);
+    }catch{setErr(true);}
+    setLoading(false);
+  }
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:320}}>
+        <div style={{textAlign:"center",marginBottom:40}}>
+          <div style={{fontFamily:"'Unbounded'",fontSize:26,fontWeight:900,color:C.text,letterSpacing:"-0.05em"}}>MafBet</div>
+          <div style={{fontSize:13,color:C.muted,marginTop:8}}>Панель администратора</div>
+        </div>
+        <Card style={{padding:24}}>
+          <Field label="Admin Key" value={key} onChange={setKey} placeholder="Введите ключ..." type="password"/>
+          {err&&<div style={{fontSize:12,color:C.red,marginBottom:10,marginTop:-6}}>Неверный ключ</div>}
+          <button onClick={tryKey} disabled={!key||loading} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",background:key?C.accent:"#e5e2de",color:key?C.accentFg:C.muted,fontSize:14,fontWeight:700,cursor:key?"pointer":"not-allowed",marginBottom:8}}>
+            {loading?"Проверяем...":"Войти →"}
+          </button>
+          <button onClick={onCancel} style={{width:"100%",padding:"11px",borderRadius:10,border:"1.5px solid "+C.border,background:"transparent",color:C.muted,fontSize:13,cursor:"pointer"}}>← Назад</button>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [mode,setMode]=useState("loading");
+  const [currentUser,setCurrentUser]=useState(null);
+  const [loginLoading,setLoginLoading]=useState(false);
+  const [loginError,setLoginError]=useState("");
+  const [toast,setToast]=useState(null);
+
+  useEffect(()=>{
+    const token=localStorage.getItem("mafbet_token");
+    if(token){api("/me").then(u=>{setCurrentUser(u);setMode("player");}).catch(()=>{localStorage.removeItem("mafbet_token");setMode("login");});}
+    else setMode("login");
+  },[]);
+
+  const showToast=useCallback((msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3200);},[]);
+
+  async function handleLogin(data){
+    setLoginLoading(true);setLoginError("");
+    try{
+      const tgUser={id:Math.floor(Math.random()*999999)+1000,first_name:data.name,username:(data.username||"").replace("@","")};
+      const initData="user="+encodeURIComponent(JSON.stringify(tgUser))+"&auth_date="+Math.floor(Date.now()/1000);
+      const res=await api("/auth/telegram",{method:"POST",body:JSON.stringify({init_data:initData})});
+      localStorage.setItem("mafbet_token",res.token);
+      setCurrentUser(res.user);setMode("player");
+    }catch(e){setLoginError(e.message);}
+    setLoginLoading(false);
+  }
+
+  if(mode==="loading") return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontFamily:"'Unbounded'",fontSize:24,fontWeight:900,color:C.text,letterSpacing:"-0.05em",marginBottom:20}}>MafBet</div>
+        <div style={{fontSize:22,display:"inline-block",animation:"spin 1s linear infinite",opacity:0.3}}>◌</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      {mode==="login"&&<LoginScreen onLogin={handleLogin} loading={loginLoading} error={loginError}/>}
+      {mode==="player"&&currentUser&&<PlayerApp currentUser={currentUser} onSwitchAdmin={()=>setMode("adminKey")} onLogout={()=>{localStorage.removeItem("mafbet_token");setCurrentUser(null);setMode("login");}} showToast={showToast}/>}
+      {mode==="adminKey"&&<AdminKeyScreen onSuccess={()=>setMode("admin")} onCancel={()=>setMode("player")}/>}
+      {mode==="admin"&&<AdminApp onExit={()=>setMode("player")} showToast={showToast}/>}
+      {toast&&<Toast msg={toast.msg} type={toast.type}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
